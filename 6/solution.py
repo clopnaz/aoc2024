@@ -4,254 +4,297 @@ import pathlib
 import logging
 import re
 import copy
+import graphlib
+import functools
 
 logging.basicConfig(level=logging.DEBUG)
 
-
 up = (-1, 0)
-down = (1, 0) 
-left = (0, -1) 
+down = (1, 0)
+left = (0, -1)
 right = (0, 1)
 
-ans = 0 
-ans2 = 0 
+
 def find_guard(lines):
-    for line_no, line in enumerate(lines):
-        match = re.search(r'v|\^|\>|\<', ''.join(line))
-        if match is not None: 
-            return  (line_no, match.span()[0])
-    return None
+    locs = tuple(
+        (line_no, column_no, what_is_there)
+        for line_no, line in enumerate(lines)
+        for column_no, what_is_there in enumerate(line)
+        if what_is_there in "<>v^"
+    )
+    assert len(locs) == 1
+    return locs[0] 
 
-# def replace_str(string, new, idx):
-#     string = list(string)
-#     string[idx] = new
-#     return ''.join(string)
+def turned_guard(guard_dir):
+    if guard_dir == '>':
+        return 'v'
+    elif guard_dir == '<':
+        return '^'
+    elif guard_dir == 'v':
+        return '<'
+    elif guard_dir == '^':
+        return '>'
 
-class LoopingException(Exception):
+class LoopException(Exception):
     pass
 
-def turned_guard(lines):
-    guard_pos = find_guard(lines)
-    if guard_pos is None:
-        return None
-    guard_dir = lines[guard_pos[0]][guard_pos[1]]
-    if guard_dir == '^':
-        # up  -> right
-        return '>'
-    elif guard_dir == '>': 
-        # right -> down 
-        return 'v'
-    elif guard_dir == 'v': 
-        # down -> left
-        return '<'
-    elif guard_dir == '<': 
-        # left -> up
-        return '^'
-    else:
-        print('you goofed')
-        __import__('pdb').set_trace()
+class ExitException(Exception):
+    pass
+
+class World:
+    def __init__(self, lines):
+        self.lines = lines
+        self.graph = graphlib.TopologicalSorter()
+        # self.connections = {}
+        # for stone_loc in self.stone_locs:
+        #     self.connections[stone_loc] = self.get_connections(stone_loc)
+        self.visited = set()
+        self.guard_loc = find_guard(self.lines)
+        self.visited.add(self.guard_loc)
+        self.extra_stone = ()
+        self.guard_loc_orig = self.guard_loc
+        self.new_stone_results = dict()
+
+    def __hash__(self):
+        return hash((self.extra_stone, self.lines))
+
+    def guard_dx(self):
+        if self.guard_loc[2] == '>':
+            dx = (0, 1)
+        elif self.guard_loc[2] == '<':
+            dx = (0, -1)
+        elif self.guard_loc[2] == 'v':
+            dx = (1, 0)
+        elif self.guard_loc[2] == '^':
+            dx = (-1, 0)
+        return dx
 
 
-def turn_guard(lines, guard_pos, prev_pos):
-    # turn 90 degrees right
-    guard_dir = lines[guard_pos[0]][guard_pos[1]]
-    prev_pos[guard_dir][guard_pos[0]][guard_pos[1]] = 'X'
-    if guard_dir == '^':
-        # up  -> right
-        lines[guard_pos[0]][guard_pos[1]] = '>'
-        return lines
-    elif guard_dir == '>': 
-        # right -> down 
-        lines[guard_pos[0]][guard_pos[1]] = 'v'
-        return lines
-    elif guard_dir == 'v': 
-        # down -> left
-        lines[guard_pos[0]][guard_pos[1]] = '<'
-        return lines
-    elif guard_dir == '<': 
-        # left -> up
-        lines[guard_pos[0]][guard_pos[1]] = '^'
-        return lines
-    else:
-        print('you goofed')
-        __import__('pdb').set_trace()
-    
-def is_obstructed(lines, front_pos):
-    # oob = not obstructed
-    if escaped(lines, front_pos):
-        return False
-    elif lines[front_pos[0]][front_pos[1]] == '#':
-        return True
-    else:
-        return False
+    def front_of_guard(self):
+        guard_loc = self.guard_loc
+        guard_dx = self.guard_dx()
+        try:
+            xy = (guard_loc[0] + guard_dx[0], guard_loc[1] + guard_dx[1])
+        except:
+            __import__('pdb').set_trace()
+        if self.extra_stone == xy:
+            thing_in_front = '#'
+        elif self.valid_index(row=xy[0], col=xy[1]):
+            thing_in_front = self[xy[0], xy[1]]
+        else:
+            thing_in_front = 'exit'
 
-def get_front_pos(lines, guard_pos, guard_dir=None):
-    if guard_dir == None:
-        guard_dir = lines[guard_pos[0]][guard_pos[1]]
-    if guard_dir == '^':
-        # up 
-        front_pos = (guard_pos[0] + up[0], guard_pos[1] + up[1])
-    elif guard_dir == 'v': 
-        # down
-        front_pos = (guard_pos[0] + down[0], guard_pos[1] + down[1])
-    elif guard_dir == '<': 
-        # left
-        front_pos = (guard_pos[0] + left[0], guard_pos[1] + left[1])
-    elif guard_dir == '>': 
-        # right
-        front_pos = (guard_pos[0] + right[0], guard_pos[1] + right[1])
-    else:
-        print('you goofed')
-        __import__('pdb').set_trace()
-    assert (front_pos[0] != guard_pos[0]) or (front_pos[1] != guard_pos[1])
-    return front_pos
+        front_of_guard = (xy[0], xy[1], thing_in_front)
+        return front_of_guard
 
-def escaped(lines, front_pos):
-    if front_pos[0] < 0:
-        return True
-    elif front_pos[1] < 0:
-        return True
-    elif front_pos[0] == len(lines):
-        return True
-    elif front_pos[1] == len(lines[front_pos[0]]):
-        return True
-    else:
-        return False
+    def step_guard(self):
+        front_of_guard = self.front_of_guard()
+        if front_of_guard[2] == '#':
+            # turn the guard
+            self.guard_loc = (self.guard_loc[0], self.guard_loc[1], turned_guard(self.guard_loc[2]))
+            if self.guard_loc not in self.visited:
+                self.visited.add(self.guard_loc)
+            else:
+                raise LoopException()
+        elif front_of_guard[2] == 'exit':
+            raise ExitException()
+        else:
+            self.guard_loc = (front_of_guard[0], front_of_guard[1], self.guard_loc[2])
+            if self.guard_loc not in self.visited:
+                self.visited.add(self.guard_loc)
+            else:
+                raise LoopException()
+            self.visited.add(self.guard_loc)
 
+    @property
+    def stone_locs(self):
+        x_max, y_max = self.shape
+        return tuple(
+            (x, y)
+            for x in range(x_max)
+            for y in range(y_max)
+            if self.lines[x][y] == "#"
+        )
 
-def would_loop(lines, prev_pos):
-    """
-    if the guard has been somewhere on his right, facing his right, 
-    he would definitely get back to where he is now if he went that way. 
-    """
-    guard_pos = find_guard(lines)
-    if guard_pos is None:
-        return False
-    turned_dir = turned_guard(lines)
-    turned_front_pos = get_front_pos(lines, guard_pos, guard_dir=turned_dir)
-    if turned_dir == '>':
-        to_his_right = prev_pos[turned_dir][guard_pos[0]][guard_pos[1]+1:]
-    elif turned_dir == '<':
-        to_his_right = reversed(prev_pos[turned_dir][guard_pos[0]][:guard_pos[1]])
-    elif turned_dir == 'v':
-        to_his_right = [prev_pos[turned_dir][n][guard_pos[1]] for n in range(guard_pos[0], len(prev_pos[turned_dir]))] 
-    elif turned_dir == '^':
-        to_his_right = [prev_pos[turned_dir][n][guard_pos[1]] for n in reversed(range(guard_pos[0]))]
-    to_his_right = ''.join(to_his_right)
-    if 'X' in to_his_right.split('#')[0]:
-        return get_front_pos(lines, guard_pos)
-    elif '#' not in to_his_right:
-        return False
-    else:
-        try: 
-            walk(lines, prev_pos, add_stones=False)
+    def __getitem__(self, slices):
+        slice_rows = slices[0]
+        slice_cols = slices[1]
+        if isinstance(slice_rows, slice):
+            return tuple(line[slice_cols] for line in self.lines[slice_rows])
+        elif isinstance(slice_cols, slice):
+            return tuple(self.lines[slice_rows][slice_cols])
+        else:
+            return self.lines[slice_rows][slice_cols]
+
+    def valid_index(self, row=0, col=0):
+        if row < 0:
             return False
-        except LoopingException:
+        elif col < 0:
+            return False
+        elif row >= self.shape[0]:
+            return False
+        elif col >= self.shape[1]:
+            return False
+        else:
             return True
 
+    def get_connections(self, stone_loc):
+        """
+        returns 4 connections, one for each direction the guard can approach the stone from
+        the direction is like a long knight's move from the stone
+        """
+        connections = {}
+        # from below
+        row = stone_loc[0] + 1
+        if self.valid_index(row=row):
+            path = self[row, stone_loc[1] :]
+            if "#" in path:
+                connections["^"] = (row, path.index("#") + stone_loc[1], ">")
+            else:
+                connections["^"] = "exit"
+        # from above
+        row = stone_loc[0] - 1
+        if self.valid_index(row=row):
+            path = tuple(reversed(self[row, : stone_loc[1]]))
+            if "#" in path:
+                index = path.index("#")
+                connections["v"] = (row, stone_loc[1] - index - 1, "<")
+            else:
+                connections["v"] = "exit"
+        # from left
+        col = stone_loc[1] - 1
+        if self.valid_index(col=col):
+            path = tuple(self[stone_loc[0] :, col])
+            if "#" in path:
+                index = path.index("#")
+                connections[">"] = (stone_loc[0] + index, col, "v")
+            else:
+                connections[">"] = "exit"
+        # from right
+        col = stone_loc[1] + 1
+        if self.valid_index(col=col):
+            path = tuple(reversed(self[: stone_loc[0], col]))
+            if "#" in path:
+                index = path.index("#")
+                connections["<"] = (stone_loc[0] - index - 1, col, "^")
+            else:
+                connections["<"] = "exit"
+        for key in connections:
+            if connections[key] == "exit":
+                continue
+            try:
+                assert self[connections[key]] == "#"
+            except:
+                __import__("pdb").set_trace()
+        return connections
 
+    @property
+    def shape(self):
+        assert all((len(line) == len(self.lines[0]) for line in self.lines))
+        return (len(self.lines), len(self.lines[0]))
 
-def move_guard(lines, prev_pos):
-    guard_pos = find_guard(lines)
-    # get dir
-    guard_dir = lines[guard_pos[0]][guard_pos[1]]
-    # get new location
-    front_pos = get_front_pos(lines, guard_pos)
-    # remove guard
-    prev_pos[guard_dir][guard_pos[0]][guard_pos[1]] = 'X'
-    lines[guard_pos[0]][guard_pos[1]] = 'X'
-    if not escaped(lines, front_pos):
-        # add guard 
-        lines[front_pos[0]][front_pos[1]] = guard_dir
-    return lines
+    def build_graph(self):
+        for stone in self.lines:
+            pass
 
-def am_i_looping(lines, prev_pos):
-    guard_pos = find_guard(lines)
-    if guard_pos is None:
-        return False
-    front_pos = get_front_pos(lines, guard_pos)
-    guard_dir = lines[guard_pos[0]][guard_pos[1]]
-    if guard_dir == '>':
-        to_his_front = prev_pos[guard_dir][guard_pos[0]][guard_pos[1]+1:]
-    elif guard_dir == '<':
-        to_his_front = reversed(prev_pos[guard_dir][guard_pos[0]][:guard_pos[1]])
-    elif guard_dir == 'v':
-        to_his_front = [prev_pos[guard_dir][n][guard_pos[1]] for n in range(guard_pos[0], len(prev_pos[guard_dir]))] 
-    elif guard_dir == '^':
-        to_his_front = [prev_pos[guard_dir][n][guard_pos[1]] for n in reversed(range(guard_pos[0]))]
-    to_his_front = ''.join(to_his_front)
-    if 'X' in to_his_front.split('#')[0]:
-        return True
-    return False
-def num_obstructions(lines):
-    obs = 0
-    for line in lines: 
-        obs += line.count('#')
-    return obs
+    def __str__(self):
+        line_one = " " * 5 + "".join(str(num // 100) for num in range(self.shape[1]))
+        line_two = " " * 5 + "".join(
+            str(num % 100 // 10) for num in range(self.shape[1])
+        )
+        line_three = " " * 5 + "".join(str(num % 10) for num in range(self.shape[1]))
+        return "\n".join(
+            [line_one, line_two, line_three]
+            + [
+                f"{line_no:03d}: " + "".join(line)
+                for line_no, line in enumerate(self.lines)
+            ]
+        )
 
-def get_count(lines):
-    ans = 0
-    for line in lines: 
-        ans += line.count('X')
-    return ans
+    def __repr__(self):
+        return "\n" + self.__str__()
 
-def walk(lines, prev_pos, add_stones=True):
-    lines = copy.deepcopy(lines)
-    prev_pos = copy.deepcopy(prev_pos)
-    guard_pos = find_guard(lines)
-    loops = []
-    steps = 0 
-    while guard_pos is not None:
-        front_pos = get_front_pos(lines, guard_pos)
-        had_to_turn = False
-        while is_obstructed(lines, front_pos):
-            had_to_turn = True
-            lines = turn_guard(lines, guard_pos, prev_pos)
-            front_pos = get_front_pos(lines, guard_pos)
-            # __import__('pdb').set_trace()
-        if had_to_turn:
-            if add_stones:
-                new_loop = would_loop(lines, prev_pos)
-                if new_loop:
-                    loops.append(new_loop)
+    def unique_locations(self):
+        return set(((visited[0], visited[1]) for visited in self.visited))
 
+    def num_unique_locations(self):
+        return len(self.unique_locations())
 
-        lines = move_guard(lines, prev_pos)
-        steps += 1
-
-        if add_stones:
-            print(f'{steps = }')
-            new_loop = would_loop(lines, prev_pos)
-            if new_loop:
-                loops.append(new_loop)
+    def get_connection_from_2_loc(self, stone_loc, guard_loc):
+        if stone_loc in self.stone_locs:
+            return self.connections(guard_loc[2])
         else:
-            if am_i_looping(lines, prev_pos):
-                raise LoopingException()
-        guard_pos = find_guard(lines)
-    return lines, prev_pos, loops
+            raise Exception()
 
-def stat(lines):
-    print('\n'.join([''.join(line) for line in lines]))
+        assert(self.valid_index(row=stone_loc[0]))
+        assert(self.valid_index(col=stone_loc[1]))
+        assert(self.valid_index(row=guard_loc[0]))
+        assert(self.valid_index(col=guard_loc[1]))
+        dx = (stone_loc[0] - guard_loc[0], stone_loc[1] - guard_loc[1])
+        assert(abs(dx[0])==1 ^ abs(dx[1])==1)
+        if dx[0] < 0:
+            guard_direction = 'v'
+        elif dx[0] > 0:
+            guard_direction = '^'
+        
+    def run(self):
+        while True:
+            try:
+                self.step_guard()
+            except ExitException:
+                break
+
+    def check_add_stone_loops(self):
+        front_of_guard = self.front_of_guard()
+        if front_of_guard[:2]  == self.guard_loc_orig[:2]:
+            # can't put a stone where the guard started
+            return False
+        elif front_of_guard[2] == 'exit':
+            return False
+        else: 
+            try:
+                stone_check_id = front_of_guard[:2]
+            except:
+                __import__('pdb').set_trace()
+            # if ((stone_check_id not in self.new_stone_results) or 
+            #     (False and stone_check_id in self.new_stone_results and not self.new_stone_results[stone_check_id])):
+            if stone_check_id not in self.new_stone_results:
+                if stone_check_id in self.visited:
+                    __import__('pdb').set_trace()
+                new_world = World(self.lines)
+                new_world.extra_stone = stone_check_id
+                try:
+                    new_world.run()
+                    self.new_stone_results[stone_check_id] = False
+                except LoopException: 
+                    self.new_stone_results[stone_check_id] = True
+                    print(self.num_looping_new_stones())
+             
+    def num_looping_new_stones(self):
+        return len(set(key for key in self.new_stone_results if self.new_stone_results[key]))
+
+    def run_2(self):
+        steps = 0 
+        while True:
+            self.check_add_stone_loops()
+            try:
+                self.step_guard()
+            except ExitException:
+                break
+            steps += 1
+            print(f'{steps = }')
 
 
-def main():
-    lines = []
-    with open('input') as fd:
-    # with open('example') as fd:
-        for line in fd:
-            line = line.strip()
-            lines.append(list(line))
-    prev_pos = {
-            '>': [list(line).copy() for line in lines.copy()],
-            'v': [list(line).copy() for line in lines.copy()],
-            '<': [list(line).copy() for line in lines.copy()],
-            '^': [list(line).copy() for line in lines.copy()],
-    }
-    stat(lines)
-    lines, prev_pos, loops = walk(lines, prev_pos)
-    stat(lines)
-    print(get_count(lines))
-    print(f'loops: {loops}')
-    print('5242?')
-if __name__ == '__main__': 
-    main()
+
+lines = tuple(tuple(line.strip()) for line in open('input'))
+# lines = tuple(tuple(line.strip()) for line in open("example"))
+world = World(lines)
+world.run_2()
+print(f"{world.num_looping_new_stones() = }")
+__import__("pdb").set_trace()
+print(f"{world = }")
+print(f"{world.shape = }")
+print(f"{world.stone_locs = }")
+print(f"{world[0:2, :] = }")
+print(f"{world.connections = }")
+print(f"{world.num_unique_locations() = }")
