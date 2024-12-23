@@ -1,0 +1,25 @@
+a good vs bad answer for 379A
+
+
+  ['<v<A', '>>^A', 'vA', '^A', '<vA', '<A', 'A', '>>^A', 'A', 'vA', '<^A', '>A', 'A', 'vA', '^A', '<vA', '>^A', 'A', '<A', '>A', '<v<A', '>A', '>^A', 'A', 'A', 'vA', '<^A', '>A']
+    <          A     >     A      v     <    <       A    A     >      ^     A    A     >     A      v      A    A     ^     A       <     v      A    A    A     >      ^     A
+               ^           A                         <    
+                           3
+  ['v<<A', '>>^A', 'vA', '^A', 'v<<A', '>>^A', 'v<A', '<A', '>>^A', 'A', 'vA', '^<A', '>A', 'vA', '^A', 'v<A', '>^A', 'A', '<A', '>A', 'v<A', '<A', '>>^A', 'A', 'A', 'vA', '^<A', '>A']
+    <          A     >     A       <       A      v     <       A    A     >      ^     A     >     A      v      A    A     ^     A      v     <       A    A    A     >      ^     A
+               ^           A               ^                    <    <                  ^           A             >    >           A                    v    v    v                  A
+                           3                                                                        I can stop here, I see that I have a ^<<^ which should not be allowed at all.
+
+
+good vs bad for 593A
+['v<A', '<A', 'A', '>>^A', 'vA', '^<A', '>A', 'A', 'vA', '^A', 'v<<A', '>>^A', 'v<A', '>A', '^A', '<A', '>A', 'v<A', '<A', '>>^A', 'A', '<A', 'v>A', '^A', 'v<A', '<A', '>>^A', '<A', 'v>A', '^A']
+    v     <    <       A     >      ^     A    A     >     A
+                       <                  ^    ^           A
+                                                           5
+
+['v<<A', '>>^A', 'A', 'v<A', '<A', '>>^A', 'vA', 'A', '<^A', '>A', 'v<A', '>^A', 'v<<A', '>^A', '>A', 'vA', '^A', 'v<A', '<A', '>>^A', 'A', 'vA', '<^A', '>A', 'v<A', '<A', '>>^A', 'vA', '<^A', '>A']
+     <       A    A      v     <       A     >    >      ^     A      v
+             ^    ^                    <                       A
+                                                               5
+
+['v<<A', '>>^A', 'A', 'v<A', '<A', '>>^A', 'vA', 'A', '^<A', '>A', 'v<<A', '>>^A', 'v<A', '>A', '^A', '<A', '>A', 'v<A', '<A', '>>^A', 'A', '<A', 'v>A', '^A', 'v<A', '<A', '>>^A', '<A', 'v>A', '^A']
