@@ -1,6 +1,29 @@
 #!/usr/bin/env python3
 import pdb
+import copy
 
+important_bits = [7, 13, 18, 26]
+my_swaps = (
+        # z07
+        # ('tgj', 'kbk') # carrying from z06 fails
+        # ('bjm', 'njc'), # 
+
+        # z18
+        ('z18', 'skf'), 
+        # ('z18', 'rrq'), # causes bad deps on many z wires
+        # ('z18', 'tgm'), # bit doesn't get better
+
+        # z26
+        ('nvr', 'wkr'),
+        # z13
+        ('hsw', 'z13'),
+        # z07
+        ('bjm', 'z07'), # option 1 
+        # ('z08', 'z07'), # option 2
+
+)
+
+# my_swaps = ()
 bool_table = {
     "AND": lambda x, y: x & y,
     "OR": lambda x, y: x | y,
@@ -95,7 +118,12 @@ with open("input") as fd:
         line = line.split()
         program[line[3]] = (line[0], line[2], line[1])
 
-
+# do the swaps
+for swap in my_swaps:
+    hold_1 = program[swap[0]]
+    hold_2 = program[swap[1]]
+    program[swap[0]] = hold_2
+    program[swap[1]] = hold_1
 expanded_program = {}
 for key in program:
     expanded_program[key] = expand(program[key])
@@ -119,6 +147,35 @@ for bit_no in range(45):
     xy = create_xy(2**bit_no, 2**bit_no)
     if solve(expanded_program[z_key], xy):
         bad_bits.add(bit_no)
+print(f'{bad_bits = }')
+
+def bit_is_bad(bit_no):
+    # try carry and sum 
+    error_codes = []
+    this_bit = 2**bit_no
+    less_bit = 2**(bit_no-1)
+    xy = create_xy(this_bit, 0)
+    if not solve(expanded_program[z_keys[bit_no]], xy):
+        error_codes.append(0)
+    xy = create_xy(this_bit, this_bit)
+    if solve(expanded_program[z_keys[bit_no]], xy):
+        error_codes.append(1)
+    if bit_no == 0:
+        # there's no lesser bit to carry from
+        return error_codes
+    xy = create_xy(less_bit, less_bit)
+    if not solve(expanded_program[z_keys[bit_no]], xy):
+        error_codes.append(2)
+    xy = create_xy(less_bit + this_bit, less_bit + this_bit)
+    if not solve(expanded_program[z_keys[bit_no]], xy):
+        error_codes.append(3)
+    xy = create_xy(less_bit, less_bit + this_bit)
+    if solve(expanded_program[z_keys[bit_no]], xy):
+        error_codes.append(4)
+    xy = create_xy(less_bit + this_bit, less_bit)
+    if solve(expanded_program[z_keys[bit_no]], xy):
+        error_codes.append(5)
+    return error_codes
 
 # the set of variables every wire depends on
 variables = {
@@ -127,27 +184,89 @@ variables = {
 }
 # create a set of variables that z wires already depend on
 # TODO: expand the program with wire names first. 
-z_dependencies = set()
-for z_key in z_keys:
-    z_dependencies.update(variables[z_key])
+def get_all_deps(expression):
+    if type(expression) == str:
+        if expression[0] in ('x', 'y'):
+            return (expression,)
+        elif expression[0] == 'z':
+            return get_all_deps(program[expression])
+        else: 
+            return (expression,) +  get_all_deps(program[expression])
+    else:
+        return get_all_deps(expression[0]) + get_all_deps(expression[1])
+
+def get_all_wire_deps(expression): 
+    if type(expression) == str:
+        if expression[0] in ('x', 'y'):
+            return (expression,)
+        else: 
+            return (expression,) +  get_all_wire_deps(program[expression])
+    else:
+        return (expression[0], expression[1], ) + get_all_wire_deps(expression[0]) + get_all_wire_deps(expression[1])
+
+all_deps = {key : get_all_deps(key) for key in program}
+
+all_wire_deps = {}
+for key in program:
+    all_wire_deps[key] = [d for d in get_all_wire_deps(key) if d[0] not in ('x', 'y')]
 
 
+expected_deps = {}
+for z_key_no in range(len(z_keys)):
+    z_key = z_keys[z_key_no]
+    expected_deps[z_key] = ()
+    if z_key == 'z45':
+        z_key_no -= 1
+    for xy_key_no in range(z_key_no+1):
+        expected_deps[z_key] += (f'x{xy_key_no:02}',)
+        expected_deps[z_key] += (f'y{xy_key_no:02}',)
+
+deps = {}
+for key in program:
+    deps[key] = tuple(dep for dep in get_all_deps(key) if dep[0] in ('x', 'y'))
+for key, expression in expanded_program.items():
+    if not key.startswith('z'):
+        continue
+    if set(deps[key]) != set(expected_deps[key]):
+        print(f'{key} has bad dependencies!')
+        for key2 in program:
+            if set(deps[key2]) == set(expected_deps[key]):
+                print(f'{key2} might be a better match')
+for bit_no in range(2,44):
+    if bit_is_bad(bit_no): 
+        print(f'{bit_no = } is bad')
+assert not bit_is_bad(18)
+# assert bit_is_bad(7)
 for bad_bit in bad_bits:
-    # get all the variables the bad bit depends on
-    bad_expression = expanded_program[z_keys[bad_bit]]
-    bad_wire_variables = get_expression_variables(expanded_program[z_keys[bad_bit]])
-    # get every expression that depends on those variables
-    possible_swap_wires = []
-    for wire, wire_variables in variables.items():
-        if set(bad_wire_variables) <= set(wire_variables):
-            possible_swap_wires.append(wire)
-    # don't swap with other z wires
-    possible_swap_wires = [
-        wire for wire in possible_swap_wires if not wire.startswith("z")
-    ]
-    # don't swap with other wires z wires depend on
-    possible_swap_wires = [
-        wire for wire in possible_swap_wires if wire not in z_dependencies
-    ]
+    z_key = z_keys[bad_bit]
+    current_wires = set([d for d in all_wire_deps[z_key] if d[0] not in ('x', 'y')])
+    # get a list of wires that *could* be part of this z wire
+    expected_dep_set = set(expected_deps[z_key])
+    if bad_bit == 7:
 
-pdb.set_trace()
+        # brute force, I guess
+        possible_wires = set([d for d in all_wire_deps if d[0] not in ('x', 'y')])
+    else:
+        possible_wires = set([wire for wire, deplist in deps.items() if set(deplist) <= expected_dep_set])
+    print(f'{bad_bit = }:  {len(current_wires) = }  {len(possible_wires) = }')
+    pdb.set_trace()
+    for swap_key_1 in possible_wires:
+        for swap_key_2 in current_wires:
+            swap_expression_1 = program[swap_key_1]
+            swap_expression_2 = program[swap_key_2]
+            program[swap_key_2] = swap_expression_1
+            program[swap_key_1] = swap_expression_2
+            try:
+                expanded_program = {key : expand(expression) for key,expression in program.items()}
+                if not bit_is_bad(bad_bit):
+                    print(f'{bad_bit = } got better with {swap_key_1 = } and {swap_key_2 = }')
+            except RecursionError:
+                pass
+            program[swap_key_1] = swap_expression_1
+            program[swap_key_2] = swap_expression_2
+
+
+
+answer = sorted([s for swap in my_swaps for s in swap])
+print(','.join(answer))
+
