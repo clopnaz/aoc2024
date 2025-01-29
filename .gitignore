@@ -1,4 +1,5 @@
 **/*.txt
 *.swp
+*.swo
 example*
 input
